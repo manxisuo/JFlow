@@ -13,7 +13,10 @@
      */
     function invokeFn(fn) {
         if (isFunction(fn)) {
-            fn();
+            var rArgs = Array.prototype.slice.call(arguments, 1);
+
+            // TODO this?
+            return fn.apply(this, rArgs);
         }
     }
 
@@ -104,15 +107,15 @@
      * @param onComplete 流程完成后的回调函数。可选
      */
     $.consumeTaskQueue = function(taskQueue, onComplete) {
-        var fn = function() {
+        var fn = function(result) {
             if (taskQueue.length > 0) {
                 var task = taskQueue.shift();
-                task(function() {
-                    fn();
-                });
+                task(function(r) {
+                    fn(r);
+                }, result);
             }
             else {
-                invokeFn(onComplete);
+                invokeFn(onComplete, result);
             }
         };
 
@@ -174,16 +177,23 @@
     function Qr() {
         this.running = false;
         this.queue = [];
+        this.lastResult = undefined;
     }
 
     Qr.prototype.exec = function(task) {
         var _this = this;
-        _this.queue.push(task);
-        if (!_this.running) {
-            _this.running = true;
-            $.consumeTaskQueue(_this.queue, function() {
-                _this.running = false;
+        if (!this.running) {
+            this.queue.push(function(cb) {
+                task(cb, this.lastResult);
             });
+            this.running = true;
+            $.consumeTaskQueue(this.queue, function(result) {
+                _this.running = false;
+                _this.lastResult = result;
+            });
+        }
+        else {
+            this.queue.push(task);
         }
 
         return _this;
