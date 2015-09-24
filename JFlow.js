@@ -15,7 +15,7 @@
      */
     function log(/* arg... */) {
         if (console && console.log) {
-            console.log.apply(console, arguments);
+            Function.prototype.apply.call(console.log, console, arguments);
         }
     }
 
@@ -37,11 +37,11 @@
      * 
      * @name JFlow~invokeFn
      * @function
-     * @param {function} fn 待调用的函数
-     * @param {...*} [arg] 函数的参数
-     * @return {*}
+     * @param {function} fn 待调用函数
+     * @param {...*} [arg] 待调用函数的参数
+     * @return {*} 调用结果
      */
-    function invokeFn(fn /* arg... */) {
+    function invokeFn(fn/* arg... */) {
         if (isFunction(fn)) {
             var rArgs = Array.prototype.slice.call(arguments, 1);
 
@@ -51,7 +51,7 @@
     }
 
     /**
-     * 表示一个同步或异步任务的函数。
+     * 表示一个同步或异步任务。
      * 任务执行完成后必须调用cb。
      * 
      * @callback Task
@@ -60,24 +60,47 @@
      */
 
     /**
-     * 重复执行某个任务，直到满足某个条件为止。
+     * 表示一个同步任务。
      * 
-     * @name JFlow#repeatTaskUntil
+     * @callback SyncTask
+     * @param {*} [lastResult] 上一个任务的执行结果
+     */
+
+    /**
+     * 表示一个消耗数组元素的同步或异步任务。
+     * 任务执行完成后必须调用cb。
+     * 
+     * @callback ArrayTask
+     * @param {function} cb 任务执行完成后调用的函数
+     * @param {*} item 数组的当前元素
+     */
+
+    /**
+     * 所有流程完成后的回调函数。
+     * 
+     * @callback OnComplete
+     * @param {...*} item 传给回调函数的参数
+     */
+
+    /**
+     * 重复执行某个任务，直到条件不满足为止。
+     * 
+     * @name JFlow#repeatWhen
      * @function
      * @param {Task} task 待执行的任务
-     * @param {function} checkFn 检查条件是否满足的函数
-     * @param {function} [onComplete] 条件满足后的回调函数
+     * @param {function} condition 检查条件是否满足的函数
+     * @param {OnComplete} [onComplete] 条件满足后的回调函数
      */
-    $.repeatTaskUntil = function(task, checkFn, onComplete) {
-        var fn = function() {
-            task(function() {
-                if (!checkFn()) {
-                    fn();
-                }
-                else {
-                    invokeFn(onComplete);
-                }
-            });
+    $.repeatWhen = function(task, condition, onComplete) {
+        var fn = function(result) {
+            if (condition()) {
+                task(function(r) {
+                    fn(r);
+                }, result);
+            }
+            else {
+                invokeFn(onComplete, result);
+            }
         };
 
         fn();
@@ -88,17 +111,15 @@
      * 
      * @name JFlow#execTaskWithParams
      * @function
-     * @param {function} taskFn 待执行的任务函数。此函数有两个参数：一是当前数组的元素，二是任务执行完成后的回调函数。
+     * @param {ArrayTask} task 消耗数组元素的任务
      * @param {any[]} paramArray 参数数组
-     * @param {function} [onComplete] 流程完成后的回调函数
+     * @param {OnComplete} [onComplete] 所有任务执行完成后的回调函数
      */
-    $.execTaskWithParams = function(taskFn, paramArray, onComplete) {
+    $.execTaskWithParams = function(task, paramArray, onComplete) {
         var i = 0, len = paramArray.length;
         var fn = function() {
             if (i < len) {
-                taskFn(paramArray[i++], function() {
-                    fn();
-                });
+                task(fn, paramArray[i++]);
             }
             else {
                 invokeFn(onComplete);
@@ -114,16 +135,16 @@
      * @name JFlow#execTaskQueue
      * @function
      * @param {Task[]} taskQueue 任务队列
-     * @param {function} [onComplete] 所有任务执行完成后的回调函数
+     * @param {OnComplete} [onComplete] 所有任务执行完成后的回调函数
      */
     $.execTaskQueue = function(taskQueue, onComplete) {
         var i = 0, len = taskQueue.length;
-        var fn = function() {
+        var fn = function(result) {
             if (i < len) {
                 var task = taskQueue[i++];
-                task(function() {
-                    fn();
-                });
+                task(function(r) {
+                    fn(r);
+                }, result);
             }
             else {
                 invokeFn(onComplete);
@@ -138,9 +159,9 @@
      * 
      * @name JFlow#execTasks
      * @function
-     * @param {...Task} taskFn 任务函数
+     * @param {...Task} task 任务
      */
-    $.execTasks = function(/* taskFn... */) {
+    $.execTasks = function(/* task... */) {
         var args = arguments, len = args.length;
         $.execTaskQueue.call(root, Array.prototype.slice.call(args, 0, len));
     };
@@ -152,7 +173,7 @@
      * @name JFlow#consumeTaskQueue
      * @function
      * @param {Task[]} taskQueue 任务队列
-     * @param {function} [onComplete] 所有任务执行完成后的回调函数
+     * @param {OnComplete} [onComplete] 所有任务执行完成后的回调函数
      */
     $.consumeTaskQueue = function(taskQueue, onComplete) {
         var fn = function(result) {
@@ -171,16 +192,16 @@
     };
 
     /**
-     * 创建一个同步的任务。
+     * 创建一个同步任务。
      * 
      * @name JFlow#getSyncTask
      * @function
-     * @param {function} taskFn 在任务中执行的函数
+     * @param {SyncTask} task 待执行的任务函数
      * @return {Task}
      */
-    $.getSyncTask = function(taskFn) {
+    $.getSyncTask = function(task) {
         return function(cb, r) {
-            taskFn();
+            task(r);
             invokeFn(cb, r);
         };
     };
@@ -217,15 +238,12 @@
      */
     $.getTsTask = function() {
         return function(cb, r) {
-            var date = new Date();
-            var y = date.getFullYear();
-            var m = date.getMonth();
-            var d = date.getDate();
-            var h = date.getHours();
-            var mi = date.getMinutes();
-            var s = date.getSeconds();
-            var ms = date.getMilliseconds();
-            log([[y, m, d].join('/'), [h, mi, s, ms].join(':')].join(' '));
+            var d = new Date();
+            var d = new Date();
+            var head = [d.getFullYear(), d.getMonth(), d.getDate()].join('/');
+            var tail = [d.getHours(), d.getMinutes(), d.getSeconds()].join(':');
+            var stamp = head + ' ' + tail + '.' + d.getMilliseconds();
+            log(stamp);
             invokeFn(cb, r);
         };
     };
@@ -236,7 +254,7 @@
      * 
      * @name JFlow#getDelayedTask
      * @function
-     * @param {null|function} taskFn 在任务中执行的函数
+     * @param {null|function} taskFn 待执行的任务函数
      * @param {number} [period=1000] 时间间隔(毫秒)
      * @return {Task}
      */
@@ -267,12 +285,31 @@
     };
 
     /**
+     * 创建一个重复执行的任务，直到条件不满足为止。
+     * 
+     * @name JFlow#getRepeatWhenTask
+     * @function
+     * @param {Task} task 待执行的任务
+     * @param {function} condition 检查条件是否满足的函数
+     * @param {OnComplete} [onComplete] 条件满足后的回调函数
+     */
+    $.getRepeatWhenTask = function(task, condition) {
+        return function(cb, r) {
+            $.repeatWhen(task, condition, cb);
+        };
+    };
+
+    /**
      * 任务队列处理器。
      *
      * @name JFlow#Qr
      * @constructor
      */
     function Qr() {
+        if (!(this instanceof Qr)) {
+            return new Qr();
+        }
+
         this.running = false;
         this.queue = [];
         this.lastResult = undefined;
@@ -310,11 +347,11 @@
      * 
      * @name JFlow#Qr#sync
      * @function
-     * @param {Task} taskFn 待执行的任务函数
+     * @param {SyncTask} task 待执行的任务函数
      * @return {JFlow#Qr}
      */
-    Qr.prototype.sync = function(taskFn) {
-        return this.exec($.getSyncTask(taskFn));
+    Qr.prototype.sync = function(task) {
+        return this.exec($.getSyncTask(task));
     }
 
     /**
@@ -342,7 +379,7 @@
     };
     
     /**
-     * 将一项控等待(睡眠)任务放入队列等待执行。
+     * 将一项等待(睡眠)任务放入队列等待执行。
      * 别名：sleep。
      * 
      * @name JFlow#Qr#wait
@@ -352,6 +389,19 @@
      */
     Qr.prototype.wait = Qr.prototype.sleep = function(period) {
         return this.exec($.getSleepTask(period));
+    };
+    
+    /**
+     * 将一项重复执行直到条件不满足为止的任务放入队列等待执行。
+     * 
+     * @name JFlow#Qr#repeatWhen
+     * @function
+     * @param {Task} task 待执行的任务
+     * @param {function} condition 检查条件是否满足的函数
+     * @return {JFlow#Qr}
+     */
+    Qr.prototype.repeatWhen = function(task, condition) {
+        return this.exec($.getRepeatWhenTask(task, condition));
     };
 
     $.Qr = Qr;
